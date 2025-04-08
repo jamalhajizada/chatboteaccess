@@ -1,0 +1,65 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.13/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.13",
+  "version": "1.0.0",
+  "id": "ec4cf5a5-65ae-49ee-9597-5e3f16abbf60",
+  "packageName": "com.eaaccess.bot",
+  "developer": {
+    "name": "Your Organization Name",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "eAccess Bot",
+    "full": "eAccess AD Account Review Bot"
+  },
+  "description": {
+    "short": "Pull and review AD accesses",
+    "full": "A bot that helps you pull and review user accesses from Active Directory"
+  },
+  "accentColor": "#44AEEA",
+  "bots": [
+    {
+      "botId": "ec4cf5a5-65ae-49ee-9597-5e3f16abbf60",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupchat"
+          ],
+          "commands": [
+            {
+              "title": "Help",
+              "description": "Shows help information"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "localhost",
+    "localhost:7860"
+  ],
+  "webApplicationInfo": {
+    "id": "ec4cf5a5-65ae-49ee-9597-5e3f16abbf60",
+    "resource": "api://botid-ec4cf5a5-65ae-49ee-9597-5e3f16abbf60"
+  }
+}
