@@ -1,5 +1,5 @@
 from botbuilder.core import ActivityHandler, TurnContext, ConversationState
-from botbuilder.schema import ActivityTypes, ChannelAccount, CardAction, ActionTypes, SuggestedActions, Activity
+from botbuilder.schema import ActivityTypes, ChannelAccount, CardAction, ActionTypes, SuggestedActions, Activity, Attachment
 import requests
 import os
 import json
@@ -31,7 +31,10 @@ class EchoBot(ActivityHandler):
         user_message = turn_context.activity.text
         
         # Check if this is a button click for "Show my assets"
-        if user_message and user_message == "Show my assets":
+        # Handle both text messages and adaptive card submissions
+        if (user_message and user_message == "Show my assets") or \
+           (turn_context.activity.value and isinstance(turn_context.activity.value, dict) and \
+            turn_context.activity.value.get("text") == "Show my assets"):
             await self._handle_show_my_assets(turn_context)
             return
         
@@ -193,10 +196,57 @@ class EchoBot(ActivityHandler):
         # First send the main message
         await turn_context.send_activity(message_text)
         
-        # Then send suggested actions with the "Show my assets" button
-        reply = self._create_suggested_actions("What would you like to do next?", ["Show my assets"])
+        # Create an adaptive card with a larger button
+        card = self._create_adaptive_card_with_button("What would you like to do next?", "Show my assets")
+        
+        # Create an activity with the adaptive card
+        reply = Activity(
+            type=ActivityTypes.message,
+            attachments=[card]
+        )
+        
+        # Send the card
         await turn_context.send_activity(reply)
     
+    def _create_adaptive_card_with_button(self, message_text: str, button_title: str) -> Attachment:
+        """
+        Create an adaptive card with a larger, more prominent button.
+        
+        Args:
+            message_text: The text to display in the message.
+            button_title: Text to display on the button.
+            
+        Returns:
+            An Attachment containing the adaptive card.
+        """
+        card_content = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.0",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": message_text,
+                    "wrap": True,
+                    "size": "Medium"
+                }
+            ],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": button_title,
+                    "data": {"text": button_title},
+                    "style": "positive",
+                    "size": "large"
+                }
+            ]
+        }
+        
+        return Attachment(
+            content_type="application/vnd.microsoft.card.adaptive",
+            content=card_content
+        )
+        
     def _create_suggested_actions(self, message_text: str, button_titles: list) -> Activity:
         """
         Create a message with suggested actions (buttons).
