@@ -3,7 +3,9 @@ from botbuilder.schema import ActivityTypes, ChannelAccount, CardAction, ActionT
 import requests
 import os
 import json
+import asyncio
 from dotenv import load_dotenv
+from assets_list import ASSETS_LIST  # Import the assets list
 
 # Load environment variables if needed
 load_dotenv()
@@ -37,8 +39,52 @@ class EchoBot(ActivityHandler):
             turn_context.activity.value.get("text") == "Show my assets"):
             await self._handle_show_my_assets(turn_context)
             return
+            
+        # Check if this is a submission from a multi-select card
+        if turn_context.activity.value and isinstance(turn_context.activity.value, dict):
+            # Log the received value for debugging
+            print(f"Received activity value: {turn_context.activity.value}")
+            
+            # Process the multi-select response
+            if "action" in turn_context.activity.value and turn_context.activity.value["action"] == "multiselect_submit":
+                # Get the selected items from the ChoiceSet
+                selected_items = turn_context.activity.value.get("multiSelectValues", [])
+                # If it's a string (comma-separated values), split it
+                if isinstance(selected_items, str):
+                    selected_items = [item.strip() for item in selected_items.split(',')]
+                    
+                print(f"Selected items from dropdown: {selected_items}")
+            elif "multiSelectValues" in turn_context.activity.value:
+                # For backward compatibility with the old dropdown
+                selected_items = turn_context.activity.value.get("multiSelectValues", [])
+                # If it's a string (comma-separated values), split it
+                if isinstance(selected_items, str):
+                    selected_items = [item.strip() for item in selected_items.split(',')]
+            else:
+                # No recognized selection format
+                selected_items = []
+            
+            # Send typing indicator while processing
+            await turn_context.send_activity(Activity(type=ActivityTypes.typing))
+            
+            # Convert selected items to a comma-delimited string
+            selected_items_text = ", ".join(selected_items)
+            
+            # Send the selected items to Langflow
+            response_data = self.run_flow(
+                message=f"Selected items: {selected_items_text}",
+                endpoint=ENDPOINT or FLOW_ID
+            )
+            
+            # Extract and send the response
+            bot_response = self.extract_text_from_langflow_response(response_data)
+            await self._send_response_with_options(turn_context, bot_response)
+            return
         
         try:
+            # Send typing indicator while processing
+            await turn_context.send_activity(Activity(type=ActivityTypes.typing))
+            
             # Call the Langflow API
             response_data = self.run_flow(
                 message=user_message,
@@ -52,6 +98,36 @@ class EchoBot(ActivityHandler):
                 # Extract text using our helper method
                 bot_response = self.extract_text_from_langflow_response(response_data)
                 print(f"Extracted response: {bot_response}")
+                
+                # Check if the response contains the trigger keyword for multi-select dropdown
+                if bot_response.startswith("SHOW_DROPDOWN:"):
+                    # Parse the items to show in the dropdown
+                    dropdown_content = bot_response.replace("SHOW_DROPDOWN:", "").strip()
+                    items = [item.strip() for item in dropdown_content.split(",")]
+                    
+                    # Create and send the multi-select dropdown card
+                    await self._send_multi_select_card(turn_context, "Please select items:", items)
+                    return
+                # Check if the response contains the trigger keyword for asset dropdown anywhere in the message
+                # Normalize the response by replacing newlines with spaces to handle multi-line responses
+                normalized_response = bot_response.replace("\n", " ")
+                if "SHOW_ASSET_DROPDOWN" in normalized_response or "SHOW_ASSET_DROPDOWN" in bot_response:
+                    # Log the detection for debugging
+                    print(f"Asset dropdown trigger detected in: {bot_response}")
+                    # Extract any message text before the keyword to use as the prompt
+                    # First try with normalized response
+                    if "SHOW_ASSET_DROPDOWN" in normalized_response:
+                        prompt_parts = normalized_response.split("SHOW_ASSET_DROPDOWN")
+                    else:
+                        prompt_parts = bot_response.split("SHOW_ASSET_DROPDOWN")
+                    prompt_text = prompt_parts[0].strip()
+                    if not prompt_text:  # If there's no text before the keyword, use a default prompt
+                        prompt_text = "Please select the assets you need access to:"
+                    
+                    # Use the predefined assets list
+                    # Create and send the multi-select dropdown card with assets
+                    await self._send_multi_select_card(turn_context, prompt_text, ASSETS_LIST)
+                    return
                 
             except Exception as extract_error:
                 print(f"Error extracting text from response: {str(extract_error)}")
@@ -80,10 +156,9 @@ class EchoBot(ActivityHandler):
             await turn_context.send_activity(error_message)
     
     async def on_members_added_activity(self, member_added: ChannelAccount, turn_context: TurnContext):
-        # Send a welcome message when a new user is added
-        for member in member_added:
-            if member.id != turn_context.activity.recipient.id:
-                await turn_context.send_activity("Hello to eAccess, now all you can do is type in an AD account, and I will pull the user's accesses for you to review.")
+        # We're not sending any welcome message when a new user is added
+        # This prevents duplicate messages when a user opens the chat
+        pass
     
     async def on_turn(self, turn_context: TurnContext):
         # Process the activity based on its type
@@ -197,7 +272,8 @@ class EchoBot(ActivityHandler):
         await turn_context.send_activity(message_text)
         
         # Create an adaptive card with a larger button
-        card = self._create_adaptive_card_with_button("What would you like to do next?", "Show my assets")
+        # Passing an empty string for the message text to remove the 'What would you like to do next?' text
+        card = self._create_adaptive_card_with_button("", "Show my assets")
         
         # Create an activity with the adaptive card
         reply = Activity(
@@ -320,3 +396,73 @@ class EchoBot(ActivityHandler):
         except Exception as e:
             print(f"Error handling 'Show my assets' request: {str(e)}")
             await turn_context.send_activity("I encountered an error trying to retrieve your assets. Please try again later.")
+            
+    async def _send_multi_select_card(self, turn_context: TurnContext, prompt_text: str, items: list) -> None:
+        """
+        Create and send an adaptive card with a multi-select dropdown.
+        
+        Args:
+            turn_context: The turn context for the current conversation.
+            prompt_text: The text to display above the dropdown.
+            items: List of items to display in the dropdown.
+        """
+        # Log that we're sending a multi-select card for debugging
+        print(f"Sending multi-select card with prompt: {prompt_text}")
+        print(f"Items to display: {items}")
+        
+        # Create a multi-select dropdown with built-in search functionality
+        card_content = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.2",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": prompt_text,
+                    "wrap": True,
+                    "size": "Medium",
+                    "weight": "Bolder"
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Select all assets you need access to:",
+                    "wrap": True,
+                    "size": "Small"
+                },
+                {
+                    "type": "Input.ChoiceSet",
+                    "id": "multiSelectValues",
+                    "isMultiSelect": True,
+                    "style": "filtered",  # This adds a search box that actually works
+                    "choices": [{"title": item, "value": item} for item in items],
+                    "placeholder": "Search and select assets..."
+                }
+            ],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "Submit",
+                    "data": {"action": "multiselect_submit"}
+                }
+            ]
+        }
+        
+        # First send a plain text message to ensure Teams is ready to receive the card
+        await turn_context.send_activity("Please select from the options below:")
+        
+        # Create an attachment with the adaptive card
+        attachment = Attachment(
+            content_type="application/vnd.microsoft.card.adaptive",
+            content=card_content
+        )
+        
+        # Create and send the activity with the attachment
+        reply = Activity(
+            type=ActivityTypes.message,
+            attachments=[attachment]
+        )
+        
+        # Add a small delay to ensure Teams processes the messages in order
+        await asyncio.sleep(0.5)
+        
+        await turn_context.send_activity(reply)
